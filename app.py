@@ -1,6 +1,7 @@
 import io
 import re
 from typing import Dict, List, Optional, Tuple
+from pathlib import Path
 
 import streamlit as st
 import fitz  # PyMuPDF
@@ -8,6 +9,8 @@ import fitz  # PyMuPDF
 
 KG_PATTERN = re.compile(r"([\d.,]+)\s*KG", re.IGNORECASE)
 NUMBER_PATTERN = re.compile(r"^[\d.,]+$")
+MAX_FILE_MB = 20
+MAX_PAGES = 300
 
 
 def _parse_number(num_str: str) -> Tuple[float, str, int]:
@@ -293,6 +296,10 @@ def _replace_in_page(
 
 def process_pdf(data: bytes, add_kg: float) -> Tuple[bytes, int]:
     doc = fitz.open(stream=data, filetype="pdf")
+    if doc.is_encrypted:
+        raise ValueError("PDF-ul este criptat și nu poate fi procesat.")
+    if doc.page_count > MAX_PAGES:
+        raise ValueError(f"PDF-ul are prea multe pagini (max {MAX_PAGES}).")
     total_replaced = 0
     cached: Dict[str, Optional[float]] = {
         "gross_center": None,
@@ -323,14 +330,24 @@ def run_app() -> None:
     file = st.file_uploader("Încarcă PDF", type=["pdf"])
 
     if file and st.button("Procesează"):
+        if file.type != "application/pdf":
+            st.error("Te rog încarcă un fișier PDF valid.")
+            return
+        if getattr(file, "size", 0) > MAX_FILE_MB * 1024 * 1024:
+            st.error(f"Fișierul depășește limita de {MAX_FILE_MB} MB.")
+            return
         data = file.read()
         with st.spinner("Procesez PDF-ul..."):
-            output, replaced = process_pdf(data, add_kg)
+            try:
+                output, replaced = process_pdf(data, add_kg)
+            except ValueError as exc:
+                st.error(str(exc))
+                return
         st.success(f"Gata. Am actualizat {replaced} valori de Gross Weight.")
         st.download_button(
             "Descarcă PDF modificat",
             data=output,
-            file_name="packing_list_updated.pdf",
+            file_name=Path(file.name).name,
             mime="application/pdf",
         )
 
